@@ -1,0 +1,1 @@
+{"run_name": "fixed_scale", "half": true, "rounding": "near", "steps": 300, "skipped_steps": [120], "n_skipped": 1, "final_eval": {"acc_master_fp32": 1.0, "acc_working": 1.0}, "final_loss": 1.5712377717136405e-05, "final_scale": 128.0}

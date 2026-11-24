@@ -1,0 +1,1 @@
+{"run_name": "mixed_stoch", "half": true, "rounding": "stoch", "steps": 300, "skipped_steps": [120], "n_skipped": 1, "final_eval": {"acc_master_fp32": 1.0, "acc_working": 1.0}, "final_loss": 8.65192760102218e-06, "final_scale": 16384.0}

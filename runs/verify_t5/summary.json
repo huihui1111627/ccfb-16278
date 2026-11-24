@@ -1,0 +1,1 @@
+{"run_name": "t5", "half": true, "rounding": "near", "steps": 6, "skipped_steps": [3], "n_skipped": 1, "final_eval": {"acc_master_fp32": 0.45, "acc_working": 0.45}, "final_loss": 1.0388625860214233, "final_scale": 64.0}

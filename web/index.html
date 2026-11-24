@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>混合精度训练看板 · numpy fp16 模拟</title>
+<style>
+  :root {
+    --bg: #0f1420; --panel: #182033; --panel2: #1f2942; --line: #2c3a5c;
+    --text: #dbe4f5; --muted: #8595b5; --accent: #5aa2ff; --ok: #43d190;
+    --warn: #ffb454; --bad: #ff6b6b; --purple: #b58cff;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 13px/1.5 -apple-system, "PingFang SC", "Microsoft YaHei", monospace; }
+  header { padding: 14px 20px; background: var(--panel);
+    border-bottom: 1px solid var(--line); display: flex; gap: 18px; align-items: center; flex-wrap: wrap; }
+  header h1 { font-size: 16px; margin: 0; }
+  select, button, input { background: var(--panel2); color: var(--text);
+    border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; font-size: 13px; }
+  button { cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.on { background: #24406b; border-color: var(--accent); }
+  .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; padding: 14px 20px; }
+  .grid2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; padding: 0 20px 14px; }
+  .card { background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 12px 14px; min-width: 0; }
+  .card h3 { margin: 0 0 8px; font-size: 12px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: .06em; font-weight: 600; }
+  .kpi .v { font-size: 22px; font-weight: 700; }
+  .kpi .s { color: var(--muted); font-size: 11px; margin-top: 2px; }
+  .v.ok { color: var(--ok); } .v.warn { color: var(--warn); } .v.bad { color: var(--bad); }
+  canvas { width: 100%; display: block; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th, td { padding: 4px 6px; text-align: right; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: var(--muted); font-weight: 600; }
+  .tag { display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 11px; }
+  .tag.skip { background: #4a2330; color: var(--bad); }
+  .tag.grow { background: #1d3d2e; color: var(--ok); }
+  .tag.hold { background: var(--panel2); color: var(--muted); }
+  .tag.fixed { background: #3d2f17; color: var(--warn); }
+  .ctrl-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 6px; }
+  .note { color: var(--muted); font-size: 11px; margin-top: 6px; }
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 11px; color: var(--muted); margin-top: 4px; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; }
+  .scroll { max-height: 260px; overflow-y: auto; }
+  .bar { height: 6px; border-radius: 3px; background: var(--panel2); overflow: hidden; }
+  .bar > div { height: 100%; background: var(--accent); }
+  label.chk { display:flex; gap:6px; align-items:center; color: var(--muted); }
+  .pill { font-size: 11px; padding: 2px 8px; border-radius: 10px; background: var(--panel2); }
+</style>
+</head>
+<body>
+<header>
+  <h1>🐟 声呐鱼群模型 · 混合精度训练看板</h1>
+  <div>实验：
+    <select id="runSel"></select>
+  </div>
+  <div>对比：
+    <select id="cmpSel"><option value="">（不对比）</option></select>
+  </div>
+  <span class="pill" id="modePill">–</span>
+  <span class="pill" id="stepPill">step –</span>
+  <label class="chk"><input type="checkbox" id="autoRefresh" checked> 1 秒自动刷新</label>
+  <button id="refreshBtn">立即刷新</button>
+</header>
+
+<!-- KPI -->
+<div class="grid">
+  <div class="card kpi"><h3>当前损失缩放系数 scale</h3><div class="v" id="kScale">–</div>
+    <div class="s" id="kScaleSub">事件 –</div></div>
+  <div class="card kpi"><h3>累计跳过步数</h3><div class="v" id="kSkip">–</div>
+    <div class="s" id="kSkipSub">–</div></div>
+  <div class="card kpi"><h3>梯度溢出元素比例（本步）</h3><div class="v" id="kOvf">–</div>
+    <div class="s">inf/nan 元素 / 全部元素</div></div>
+  <div class="card kpi"><h3>fp16 / fp32 参数相对差距</h3><div class="v" id="kGap">–</div>
+    <div class="s">主副本与半精度副本 L2 距离</div></div>
+</div>
+
+<!-- 控制 + 舍入 -->
+<div class="grid2">
+  <div class="card">
+    <h3>损失缩放手动控制（需求 8）</h3>
+    <div class="ctrl-row">
+      <button id="fixBtn">固定当前 scale（停止动态调整）</button>
+      <button id="freeBtn">恢复动态调整</button>
+      <input id="scaleInput" type="number" min="0.0001" step="0.5" style="width:110px" placeholder="手动 scale">
+      <button id="setScaleBtn">应用数值</button>
+    </div>
+    <div class="note" id="ctrlNote">固定后即便溢出也不会减半，可观察梯度持续 inf、训练停摆的现象。
+      控制通过 control.json 下发，训练器每步读取。</div>
+  </div>
+  <div class="card">
+    <h3>舍入模式吞零对比（需求 7，本步真实尺度梯度）</h3>
+    <table>
+      <tr><th></th><th>就近偶舍入</th><th>随机舍入</th></tr>
+      <tr><td>非零梯度被吞成零的比例</td><td id="nearEat">–</td><td id="stochEat">–</td></tr>
+      <tr><td>全量零元素比例</td><td id="nearZero">–</td><td id="stochZero">–</td></tr>
+    </table>
+    <div class="note">随机舍入期望无偏：小梯度不会被系统性清零，曲线见下方。</div>
+  </div>
+</div>
+
+<!-- 图表 第一行 -->
+<div class="grid2">
+  <div class="card"><h3>损失曲线：混合精度 vs 全单精度（同种子）</h3>
+    <canvas id="cLoss" height="240"></canvas>
+    <div class="legend" id="lossLegend"></div></div>
+  <div class="card"><h3>每步损失缩放系数（对数轴）</h3>
+    <canvas id="cScale" height="240"></canvas>
+    <div class="legend"><span><i style="background:#5aa2ff"></i>scale</span>
+      <span><i style="background:#ff6b6b"></i>跳过步</span></div></div>
+</div>
+
+<!-- 图表 第二行 -->
+<div class="grid2">
+  <div class="card"><h3>梯度下溢成零比例：不缩放反事实 vs 缩放后</h3>
+    <canvas id="cUnder" height="220"></canvas>
+    <div class="legend"><span><i style="background:#ff6b6b"></i>scale=1 反事实（再跑一次反向）</span>
+      <span><i style="background:#43d190"></i>当前 scale 实际路径</span></div></div>
+  <div class="card"><h3>两种舍入的小梯度吞零比例</h3>
+    <canvas id="cRound" height="220"></canvas>
+    <div class="legend"><span><i style="background:#ffb454"></i>就近舍入</span>
+      <span><i style="background:#b58cff"></i>随机舍入</span></div></div>
+</div>
+
+<!-- 图表 第三行 -->
+<div class="grid2">
+  <div class="card"><h3>验证集准确率（fp32 主副本评估）</h3>
+    <canvas id="cAcc" height="220"></canvas></div>
+  <div class="card"><h3>单步更新若写入 fp16 权重会被舍掉的元素比例（需求 5）</h3>
+    <canvas id="cEat" height="220"></canvas>
+    <div class="note">比例可能很高，但更新全部累加在 float32 主副本中，不丢失。</div></div>
+</div>
+
+<!-- 激活表 + 事件流 -->
+<div class="grid2">
+  <div class="card"><h3>每层激活 min / max 与 fp16 表示范围余量（需求 4）</h3>
+    <div class="scroll"><table id="actTable">
+      <thead><tr><th>层</th><th>dtype</th><th>min</th><th>max</th><th>|max|</th>
+        <th>距 fp16 上界 65504 余量</th><th>非有限</th></tr></thead>
+      <tbody></tbody></table></div>
+    <div class="note">fp16 最大可表示数 65504；最小正规格化 6.10e-5；最小正次规格化 5.96e-8。</div>
+  </div>
+  <div class="card"><h3>事件流（溢出跳步 / scale 增长）</h3>
+    <div class="scroll"><table id="evtTable">
+      <thead><tr><th>步</th><th>事件</th><th>scale</th><th>损失</th><th>注入</th><th>参数未动</th></tr></thead>
+      <tbody></tbody></table></div></div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

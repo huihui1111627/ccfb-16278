@@ -1,0 +1,1 @@
+{"run_name": "v_fp32", "half": false, "rounding": "near", "steps": 300, "skipped_steps": [], "n_skipped": 0, "final_eval": {"acc_master_fp32": 1.0, "acc_working": 1.0}, "final_loss": 0.002911969320848584, "final_scale": 1.0}
